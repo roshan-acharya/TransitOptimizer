@@ -471,24 +471,27 @@ class RingRoadEnv(gym.Env):
         return float(
             np.mean(occupancies)
         )
-    
-    def _calculate_reward(self,waiting_time,):
 
+    def _calculate_reward(self, waiting_time, step_profit):
 
-        waiting_penalty = (waiting_time* 0.1)
+  
+        waiting_penalty = waiting_time * 0.015
+        occupancy = self._average_occupancy()
 
-        occupancy = (self._average_occupancy())
-
-        target_occupancy = 0.85
+        target_occupancy = 0.45
 
         occupancy_penalty = (
-            abs(occupancy - target_occupancy)* 10)
+            abs(occupancy - target_occupancy) * 10
+        )
 
-        profit = (self.total_revenue- self.total_cost)
+        profit_reward = step_profit * 0.01
 
-        profit_reward = (profit* 0.01)
+        reward = (
+            profit_reward
+            - waiting_penalty
+            - occupancy_penalty
+        )
 
-        reward = (profit_reward - waiting_penalty - occupancy_penalty)
         return float(reward)
         
     #Observation
@@ -597,6 +600,12 @@ class RingRoadEnv(gym.Env):
 
         self.total_cost += step_cost
 
+        step_profit = (
+            boarded
+            * self.fare_per_passenger
+            - step_cost
+        )
+
         # --------------------------------------------------
         # 6. Move buses
         # --------------------------------------------------
@@ -609,7 +618,8 @@ class RingRoadEnv(gym.Env):
 
         reward = (
             self._calculate_reward(
-                waiting_time
+                waiting_time,
+                step_profit,
             )
         )
 
