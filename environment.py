@@ -1,862 +1,740 @@
-import random
-from dataclasses import dataclass
+import gymnasium as gym
+from gymnasium import spaces
+import numpy as np
 
+class RingRoadEnv(gym.Env):
+    """
+    A Simple environment for ring road public bus traffic simulation
 
+    Simulated Bus Stops:
+        Gongabu
+        Balaju
+        Kalanki
+        Balkhu
+        Satdobato
+        Koteshwor
+        Tinkune
+        Chabahil
+        Gongabu
+    
+    Goals:
+        1. Minimize passenger waiting time
+        2. Keep buses reasonably full
+        3. Maximize profit
+    
+    """
+    metadata = {"render_modes": ["human"]}
 
-ZONES = [
-    "Gongabu",
-    "Balaju",
-    "Kalanki",
-    "Balkumari",
-    "Satdobato",
-    "Koteshwor",
-    "Tinkune",
-    "Chabahil",
-]
+    def __init__(self, render=None):
+        super().__init__()
 
+        #Road Zones
 
-# ============================================================
-# SIMULATION PARAMETERS
-# ============================================================
-
-STEP_MINUTES = 5
-
-BUS_CAPACITY = 30
-
-TOTAL_FLEET = 20
-
-FARE_PER_PASSENGER = 30
-
-COST_PER_STEP = 40
-
-
-# Base passenger arrivals per 5-minute step
-BASE_DEMAND = {
-    "Gongabu": 10,
-    "Balaju": 7,
-    "Kalanki": 12,
-    "Balkumari": 8,
-    "Satdobato": 9,
-    "Koteshwor": 14,
-    "Tinkune": 8,
-    "Chabahil": 10,
-}
-
-
-# ============================================================
-# BUS
-# ============================================================
-
-@dataclass
-class Bus:
-
-    bus_id: int
-
-    # Position in the Ring Road
-    position: int = 0
-
-    # Current passengers
-    passengers: int = 0
-
-    # Is bus currently making a Ring Road trip?
-    active: bool = False
-
-    # Statistics
-    trips_completed: int = 0
-
-    total_passengers_served: int = 0
-
-    revenue: float = 0.0
-
-    operating_cost: float = 0.0
-
-
-    # --------------------------------------------------------
-    # Current zone
-    # --------------------------------------------------------
-
-    @property
-    def zone(self):
-
-        return ZONES[self.position]
-
-
-    # --------------------------------------------------------
-    # Occupancy
-    # --------------------------------------------------------
-
-    @property
-    def occupancy(self):
-
-        return self.passengers / BUS_CAPACITY
-
-
-    # --------------------------------------------------------
-    # Reset bus
-    # --------------------------------------------------------
-
-    def reset(self):
-
-        self.position = 0
-
-        self.passengers = 0
-
-        self.active = False
-
-        self.trips_completed = 0
-
-        self.total_passengers_served = 0
-
-        self.revenue = 0.0
-
-        self.operating_cost = 0.0
-
-
-# ============================================================
-# RING ROAD ENVIRONMENT
-# ============================================================
-
-class RingRoadEnvironment:
-
-    def __init__(self):
-
-        self.zones = ZONES
-
-        self.buses = [
-            Bus(bus_id=i + 1)
-            for i in range(TOTAL_FLEET)
+        self.zones = [
+            "Gongabu",
+            "Balaju",
+            "Kalanki",
+            "Balkhu",
+            "Satdobato",
+            "Koteshwor",
+            "Tinkune",
+            "Chabahil",
         ]
 
-        self.reset()
+        # Environment Parameters    
+        self.num_zones = len(self.zones)
+        self.segment_time = 5
+        self.step_minutes = 5
+        self.max_steps = 192
+
+        # Fare setup
+        self.fare_per_passenger = 30
+        self.cost_per_bus_per_step = 40
+
+        # Base passenger demands
+
+        self.base_demand = np.array([
+            10,  # Gongabu
+            7,   # Balaju
+            12,  # Kalanki
+            8,   # Balkumari
+            9,   # Satdobato
+            14,  # Koteshwor
+            8,   # Tinkune
+            10,  # Chabahil
+        ], dtype=np.float32)
 
 
-    # ========================================================
-    # RESET
-    # ========================================================
+        
+        # ACTION SPACE
+        
 
-    def reset(self):
+        # 0 -> dispatch 0 buses
+        # 1 -> dispatch 1 bus
+        # 2 -> dispatch 2 buses
+        # 3 -> dispatch 3 buses
 
-        # Simulation time
-        self.time = 0
+        self.action_space = spaces.Discrete(4)
 
-        # Last time a bus was dispatched
-        self.last_dispatch_time = 0
 
-        # ----------------------------------------------------
-        # Passenger queues
-        # ----------------------------------------------------
+        # OBSERVATION SPACE
 
-        self.waiting = {
-            zone: 0
-            for zone in self.zones
-        }
 
-        # ----------------------------------------------------
-        # Total passenger waiting time
-        #
-        # Unit:
-        # passenger-minutes
-        # ----------------------------------------------------
+            # For every zone we provide:
+            
+            # 1. Current waiting passengers
+            # 2. Expected future demand
+            # 3. ETA of nearest bus
+            # 4. Estimated unmet demand
+            
+            # With :
 
-        self.waiting_time = {
-            zone: 0
-            for zone in self.zones
-        }
+            # 5. Available buses
+            # 6. Active buses
+            # 7. Average occupancy
 
-        # ----------------------------------------------------
-        # Global statistics
-        # ----------------------------------------------------
+
+        #Internal state representation
+
+        self.current_step = 0
+
+        self.waiting = None
+        self.buses = []
 
         self.total_arrivals = 0
-
         self.total_served = 0
-
-        self.total_revenue = 0.0
-
-        self.total_cost = 0.0
-
-        self.total_profit = 0.0
-
-        self.completed_trips = 0
-
-        # ----------------------------------------------------
-        # Reset fleet
-        # ----------------------------------------------------
-
-        for bus in self.buses:
-
-            bus.reset()
-
-        return self.get_state()
+        self.total_revenue = 0
+        self.total_cost = 0
+        self.total_waiting_time = 0
 
 
-    # ========================================================
-    # CURRENT SIMULATION TIME
-    # ========================================================
 
-    def current_hour(self):
 
-        minutes = self.time * STEP_MINUTES
+     
+      #Reset
+
+    def reset(self, *, seed=None, options=None):
+
+        super().reset(seed=seed)
+
+        self.current_step = 0
+
+        # Waiting passengers at each zone
+        self.waiting = np.zeros(
+            self.num_zones,
+            dtype=np.float32,
+        )
+
+        # List of active buses
+        self.buses = []
+
+        # Statistics
+        self.total_arrivals = 0
+        self.total_served = 0
+        self.total_revenue = 0
+        self.total_cost = 0
+        self.total_waiting_time = 0
+
+        observation = self._get_observation()
+
+        info = self._get_info()
+
+        return observation, info
+
+    # ======================================================
+    # TIME
+    # ======================================================
+
+    def _current_hour(self):
+
+        minutes = (
+            self.current_step
+            * self.step_minutes
+        )
 
         return 6 + minutes / 60
+    
 
+    def _demand_multiplier(self):
 
-    # ========================================================
-    # DEMAND MULTIPLIER
-    # ========================================================
-
-    def demand_multiplier(self):
-
-        hour = self.current_hour()
+        hour = self._current_hour()
 
         # Morning peak
         if 7 <= hour < 9:
-
             return 1.8
 
         # Evening peak
         if 16 <= hour < 19:
-
             return 1.8
 
-        # Midday lower demand
+        # Lower midday demand
         if 10 <= hour < 15:
-
             return 0.8
 
-        # Normal demand
         return 1.0
+    
+
+    # GENERATE PASSENGER DEMAND
+
+    def _generate_demand(self):
+
+        multiplier = self._demand_multiplier()
+
+        expected_demand = (
+            self.base_demand
+            * multiplier
+        )
+
+        arrivals = self.np_random.poisson(
+            expected_demand
+        )
+
+        self.waiting += arrivals
+
+        self.total_arrivals += int(
+            arrivals.sum()
+        )
+
+        return arrivals
 
 
-    # ========================================================
-    # GENERATE PASSENGERS
-    # ========================================================
+     # DISPATCH BUS FROM GONGABU
 
-    def generate_passengers(self):
+    def _bus_dispatch(self):
 
-        multiplier = self.demand_multiplier()
+        if len(self.buses) >= self.total_fleet:
+            return False
 
-        arrivals_this_step = {}
+        bus = {
+            "id": self._next_bus_id(),
+            "position": 0,
+            "passengers": 0,
+        }
 
-        for zone in self.zones:
+        self.buses.append(bus)
 
-            expected = (
-                BASE_DEMAND[zone]
-                * multiplier
-            )
+        return True
 
-            # Random demand around expected value
-            arrivals = max(
-                0,
-                round(
-                    random.gauss(
-                        expected,
-                        expected * 0.20
-                    )
-                )
-            )
+    
+     # BUS ID
 
-            self.waiting[zone] += arrivals
+    def _next_bus_id(self):
 
-            self.total_arrivals += arrivals
+        if not self.buses:
+            return 1
 
-            arrivals_this_step[zone] = arrivals
-
-        return arrivals_this_step
-
-
-    # ========================================================
-    # DISPATCH BUS FROM GONGABU
-    # ========================================================
-
-    def dispatch_bus(self):
-
-        # Find a bus that is currently available
-        for bus in self.buses:
-
-            if not bus.active:
-
-                # Bus starts from Gongabu
-                bus.position = 0
-
-                bus.passengers = 0
-
-                bus.active = True
-
-                return bus.bus_id
-
-        # No bus available
-        return None
-
-
-    # ========================================================
-    # AVAILABLE BUSES
-    # ========================================================
-
-    def available_buses(self):
-
-        return sum(
-            not bus.active
+        return max(
+            bus["id"]
             for bus in self.buses
-        )
+        ) + 1
+    
+    #Move bus
 
-
-    # ========================================================
-    # ACTIVE BUSES
-    # ========================================================
-
-    def active_buses(self):
-
-        return sum(
-            bus.active
-            for bus in self.buses
-        )
-
-
-    # ========================================================
-    # PASSENGERS LEAVING BUS
-    # ========================================================
-
-    def passengers_leave(self, bus):
-
-        if bus.passengers <= 0:
-
-            return 0
-
-        # Simplified assumption:
-        # 10–30% of passengers leave at each zone.
-
-        leaving = round(
-            bus.passengers
-            * random.uniform(
-                0.10,
-                0.30
-            )
-        )
-
-        leaving = min(
-            leaving,
-            bus.passengers
-        )
-
-        bus.passengers -= leaving
-
-        return leaving
-
-
-    # ========================================================
-    # BOARD PASSENGERS
-    # ========================================================
-
-    def board_passengers(self, bus):
-
-        zone = bus.zone
-
-        available_capacity = (
-            BUS_CAPACITY
-            - bus.passengers
-        )
-
-        if available_capacity <= 0:
-
-            return 0
-
-        waiting = self.waiting[zone]
-
-        boarded = min(
-            waiting,
-            available_capacity
-        )
-
-        # Remove passengers from queue
-        self.waiting[zone] -= boarded
-
-        # Add passengers to bus
-        bus.passengers += boarded
-
-        # Statistics
-        self.total_served += boarded
-
-        bus.total_passengers_served += boarded
-
-        # Revenue
-        revenue = (
-            boarded
-            * FARE_PER_PASSENGER
-        )
-
-        bus.revenue += revenue
-
-        self.total_revenue += revenue
-
-        return boarded
-
-
-    # ========================================================
-    # MOVE BUSES
-    # ========================================================
-
-    def move_buses(self):
-
-        completed_trips = []
+    def _move_buses(self):
 
         for bus in self.buses:
 
-            if not bus.active:
+            # Move one zone every simulation step
+            bus["position"] += 1
 
-                continue
+            # After completion reset positon on gongabu
+            if bus["position"] >= self.num_zones:
+                bus["position"] = 0
+                bus["passengers"] = 0
 
-            # ------------------------------------------------
-            # 1. Passengers leave
-            # ------------------------------------------------
+    
+    # PASSENGER PROCESSING
+    def _process_passengers(self):
 
-            self.passengers_leave(bus)
+        total_boarded = 0
 
-            # ------------------------------------------------
-            # 2. Waiting passengers board
-            # ------------------------------------------------
+        for bus in self.buses:
 
-            self.board_passengers(bus)
+            zone = bus["position"]
 
-            # ------------------------------------------------
-            # 3. Operating cost
-            # ------------------------------------------------
 
-            bus.operating_cost += COST_PER_STEP
+            # passenger leaving simulation
+            if bus["passengers"] > 0:
 
-            self.total_cost += COST_PER_STEP
-
-            # ------------------------------------------------
-            # 4. Move to next Ring Road zone
-            # ------------------------------------------------
-
-            bus.position += 1
-
-            # ------------------------------------------------
-            # 5. Full loop completed
-            # ------------------------------------------------
-
-            if bus.position >= len(ZONES):
-
-                bus.position = 0
-
-                bus.active = False
-
-                bus.trips_completed += 1
-
-                self.completed_trips += 1
-
-                completed_trips.append(
-                    bus.bus_id
+                leaving_ratio = self.np_random.uniform(
+                    0.10,
+                    0.30,
                 )
 
-        return completed_trips
+                leaving = int(
+                    bus["passengers"]
+                    * leaving_ratio
+                )
+
+                bus["passengers"] -= leaving
 
 
-    # ========================================================
-    # UPDATE WAITING TIME
-    # ========================================================
-
-    def update_waiting_time(self):
-
-        step_waiting_time = 0
-
-        for zone in self.zones:
-
-            passengers = self.waiting[zone]
-
-            # Every waiting passenger waits another
-            # STEP_MINUTES minutes.
-
-            additional_waiting = (
-                passengers
-                * STEP_MINUTES
+            available_capacity = (
+                self.bus_capacity
+                - bus["passengers"]
             )
 
-            self.waiting_time[zone] += (
-                additional_waiting
+     
+            waiting = self.waiting[zone]
+
+            # Passengers can board
+            boarded = min(
+                waiting,
+                available_capacity,
             )
 
-            step_waiting_time += (
-                additional_waiting
+            self.waiting[zone] -= boarded
+
+            bus["passengers"] += boarded
+
+            total_boarded += int(boarded)
+
+            self.total_served += int(boarded)
+
+            # Revenue
+            self.total_revenue += (
+                boarded
+                * self.fare_per_passenger
             )
 
-        return step_waiting_time
+        return total_boarded
+    
+    #Find nearest bus to the zone
+    def _nearest_bus(self, zone):
 
+        if not self.buses:
+            return None
 
-    # ========================================================
-    # CURRENT AVERAGE OCCUPANCY
-    # ========================================================
+        nearest_bus = None
+        nearest_distance = float("inf")
 
-    def average_occupancy(self):
+        for bus in self.buses:
 
-        active_buses = [
-            bus
-            for bus in self.buses
-            if bus.active
-        ]
+            current_position = bus["position"]
 
-        if not active_buses:
+            # Ring-road distance
+            distance = (
+                zone
+                - current_position
+            ) % self.num_zones
 
-            return 0.0
+            if distance < nearest_distance:
+
+                nearest_distance = distance
+                nearest_bus = bus
+
+        return nearest_bus
+    
+    
+    #Bus Expected Time of Arrival (ETA) to the zone
+    def _nearest_bus_eta(self, zone):
+
+        if not self.buses:
+            return None
+
+        nearest_distance = float("inf")
+
+        for bus in self.buses:
+
+            distance = (
+                zone
+                - bus["position"]
+            ) % self.num_zones
+
+            nearest_distance = min(
+                nearest_distance,
+                distance,
+            )
 
         return (
-            sum(
-                bus.occupancy
-                for bus in active_buses
+            nearest_distance
+            * self.segment_time
+        )
+
+
+    #Expected future demand
+    def _expected_future_demand(self, zone):
+
+        eta = self._nearest_bus_eta(zone)
+
+    
+        if eta is None:
+            eta = 30
+
+        steps_until_arrival = max(
+            1,
+            int(
+                np.ceil(
+                    eta
+                    / self.step_minutes
+                )
+            ),
+        )
+
+        multiplier = self._demand_multiplier()
+
+        demand_per_step = (
+            self.base_demand[zone]
+            * multiplier
+        )
+
+        expected = (
+            demand_per_step
+            * steps_until_arrival
+        )
+
+        return float(expected)
+    
+
+
+    #Estimate UMET demand
+
+    def _estimate_unmet_demand(self, zone):
+
+        current_waiting = (
+            self.waiting[zone]
+        )
+
+        future_demand = (
+            self._expected_future_demand(zone)
+        )
+
+        bus = self._nearest_bus(zone)
+
+
+        if bus is None:
+            available_capacity = 0
+
+        else:
+            available_capacity = (
+                self.bus_capacity
+                - bus["passengers"]
             )
-            / len(active_buses)
+
+        expected_total = (
+            current_waiting
+            + future_demand
         )
 
-
-    # ========================================================
-    # CALCULATE REWARD
-    # ========================================================
-
-    def calculate_reward(
-        self,
-        step_profit,
-        step_waiting_time,
-    ):
-
-        # ----------------------------------------------------
-        # 1. Waiting penalty
-        # ----------------------------------------------------
-
-        waiting_penalty = (
-            step_waiting_time
-            * 0.10
+        unmet = max(
+            0,
+            expected_total
+            - available_capacity,
         )
 
-        # ----------------------------------------------------
-        # 2. Occupancy penalty
-        # ----------------------------------------------------
+        return float(unmet)
+    
+    #Waiting time
+    def _calculate_waiting_time(self):
 
-        occupancy = (
-            self.average_occupancy()
+        waiting_passengers = (
+            self.waiting.sum()
         )
+
+        waiting_time = (
+            waiting_passengers
+            * self.step_minutes
+        )
+
+        self.total_waiting_time += (
+            waiting_time
+        )
+
+        return float(waiting_time)
+    
+    def _average_occupancy(self):
+
+        if not self.buses:
+            return 0.0
+
+        occupancies = []
+
+        for bus in self.buses:
+
+            occupancy = (
+                bus["passengers"]
+                / self.bus_capacity
+            )
+
+            occupancies.append(
+                occupancy
+            )
+
+        return float(
+            np.mean(occupancies)
+        )
+    
+    def _calculate_reward(self,waiting_time,):
+
+
+        waiting_penalty = (waiting_time* 0.1)
+
+        occupancy = (self._average_occupancy())
 
         target_occupancy = 0.85
 
-        # Penalize buses that are far from 85%
         occupancy_penalty = (
-            abs(
-                occupancy
-                - target_occupancy
-            )
-            * 10
-        )
+            abs(occupancy - target_occupancy)* 10)
 
-        # ----------------------------------------------------
-        # 3. Profit reward
-        # ----------------------------------------------------
+        profit = (self.total_revenue- self.total_cost)
 
-        profit_reward = (
-            step_profit
-            * 0.05
-        )
+        profit_reward = (profit* 0.01)
 
-        # ----------------------------------------------------
-        # Final reward
-        # ----------------------------------------------------
+        reward = (profit_reward - waiting_penalty - occupancy_penalty)
+        return float(reward)
+        
+    #Observation
+    def _get_observation(self):
 
-        reward = (
-            -waiting_penalty
-            -occupancy_penalty
-            +profit_reward
-        )
+        observation = []
 
-        return reward
-
-
-    # ========================================================
-    # MAIN ENVIRONMENT STEP
-    # ========================================================
-
-    def step(
-        self,
-        dispatch_count=0
-    ):
-
-        # ----------------------------------------------------
-        # Save previous profit
-        # ----------------------------------------------------
-
-        previous_profit = (
-            self.total_profit
-        )
-
-        # ----------------------------------------------------
-        # 1. Generate new passenger demand
-        # ----------------------------------------------------
-
-        arrivals = (
-            self.generate_passengers()
-        )
-
-        # ----------------------------------------------------
-        # 2. Dispatch buses from Gongabu
-        # ----------------------------------------------------
-
-        dispatched = []
-
-        for _ in range(
-            dispatch_count
+        for zone in range(
+            self.num_zones
         ):
 
-            bus_id = (
-                self.dispatch_bus()
+            # Current passengers waiting
+            waiting = (
+                self.waiting[zone]
             )
 
-            if bus_id is not None:
-
-                dispatched.append(
-                    bus_id
+            # Future demand
+            future_demand = (
+                self._expected_future_demand(
+                    zone
                 )
-
-                self.last_dispatch_time = (
-                    self.time
-                )
-
-        # ----------------------------------------------------
-        # 3. Move buses
-        # ----------------------------------------------------
-
-        completed = (
-            self.move_buses()
-        )
-
-        # ----------------------------------------------------
-        # 4. Calculate waiting time
-        # ----------------------------------------------------
-
-        step_waiting_time = (
-            self.update_waiting_time()
-        )
-
-        # ----------------------------------------------------
-        # 5. Calculate total profit
-        # ----------------------------------------------------
-
-        self.total_profit = (
-            self.total_revenue
-            - self.total_cost
-        )
-
-        # ----------------------------------------------------
-        # 6. Calculate profit generated this step
-        # ----------------------------------------------------
-
-        step_profit = (
-            self.total_profit
-            - previous_profit
-        )
-
-        # ----------------------------------------------------
-        # 7. Reward
-        # ----------------------------------------------------
-
-        reward = self.calculate_reward(
-            step_profit=step_profit,
-            step_waiting_time=step_waiting_time,
-        )
-
-        # ----------------------------------------------------
-        # 8. Advance simulation clock
-        # ----------------------------------------------------
-
-        self.time += 1
-
-        # ----------------------------------------------------
-        # 9. Return state information
-        # ----------------------------------------------------
-
-        state = self.get_state()
-
-        return state, reward
-
-
-    # ========================================================
-    # RL STATE
-    # ========================================================
-
-    def get_rl_state(self):
-
-        # ----------------------------------------------------
-        # 1. Waiting level
-        # ----------------------------------------------------
-
-        total_waiting = sum(
-            self.waiting.values()
-        )
-
-        if total_waiting < 30:
-
-            waiting_level = 0
-
-        elif total_waiting < 70:
-
-            waiting_level = 1
-
-        else:
-
-            waiting_level = 2
-
-        # ----------------------------------------------------
-        # 2. Demand level
-        # ----------------------------------------------------
-
-        if self.time == 0:
-
-            average_demand = 0
-
-        else:
-
-            average_demand = (
-                self.total_arrivals
-                / self.time
-                / len(self.zones)
             )
 
-        if average_demand < 8:
+            # Bus ETA
+            eta = (
+                self._nearest_bus_eta(
+                    zone
+                )
+            )
 
-            demand_level = 0
+            if eta is None:
+                eta = 30.0
 
-        elif average_demand < 14:
+            # Potential unmet demand
+            unmet = (
+                self._estimate_unmet_demand(
+                    zone
+                )
+            )
 
-            demand_level = 1
+            observation.extend([
+                waiting,
+                future_demand,
+                eta,
+                unmet,
+            ])
 
-        else:
-
-            demand_level = 2
-
-        # ----------------------------------------------------
-        # 3. Available buses
-        # ----------------------------------------------------
-
-        available = (
-            self.available_buses()
+        # Global state
+        available_buses = (
+            self.total_fleet
+            - len(self.buses)
         )
 
-        if available <= 4:
-
-            available_level = 0
-
-        elif available <= 10:
-
-            available_level = 1
-
-        else:
-
-            available_level = 2
-
-        # ----------------------------------------------------
-        # 4. Active buses
-        # ----------------------------------------------------
-
-        active = (
-            self.active_buses()
+        active_buses = len(
+            self.buses
         )
-
-        if active <= 5:
-
-            active_level = 0
-
-        elif active <= 12:
-
-            active_level = 1
-
-        else:
-
-            active_level = 2
-
-        # ----------------------------------------------------
-        # 5. Average occupancy
-        # ----------------------------------------------------
 
         occupancy = (
-            self.average_occupancy()
+            self._average_occupancy()
         )
 
-        if occupancy < 0.60:
+        observation.extend([
+            available_buses,
+            active_buses,
+            occupancy,
+        ])
 
-            occupancy_level = 0
+        return np.array(
+            observation,
+            dtype=np.float32,
+        )
+    
+    # STEP
+    def step(self, action):
 
-        elif occupancy < 0.80:
+        action = int(action)
 
-            occupancy_level = 1
-
-        else:
-
-            occupancy_level = 2
-
-        # ----------------------------------------------------
-        # 6. Headway
-        # ----------------------------------------------------
-
-        headway = (
-            self.time
-            - self.last_dispatch_time
+        arrivals = (
+            self._generate_demand()
         )
 
-        if headway <= 2:
+    
+        dispatched = 0
 
-            headway_level = 0
+        for _ in range(action):
 
-        elif headway <= 4:
+            if self._dispatch_bus():
 
-            headway_level = 1
+                dispatched += 1
 
-        else:
+    
+        boarded = (
+            self._process_passengers()
+        )
 
-            headway_level = 2
+    
+        waiting_time = (
+            self._calculate_waiting_time()
+        )
 
-        # ----------------------------------------------------
-        # Final discrete state
-        # ----------------------------------------------------
+   
+        step_cost = (
+            len(self.buses)
+            * self.cost_per_bus_per_step
+        )
+
+        self.total_cost += step_cost
+
+        # --------------------------------------------------
+        # 6. Move buses
+        # --------------------------------------------------
+
+        self._move_buses()
+
+        # --------------------------------------------------
+        # 7. Reward
+        # --------------------------------------------------
+
+        reward = (
+            self._calculate_reward(
+                waiting_time
+            )
+        )
+
+        # --------------------------------------------------
+        # 8. Advance simulation time
+        # --------------------------------------------------
+
+        self.current_step += 1
+
+        # --------------------------------------------------
+        # 9. Episode termination
+        # --------------------------------------------------
+
+        terminated = (
+            self.current_step
+            >= self.max_steps
+        )
+
+        truncated = False
+
+        # --------------------------------------------------
+        # 10. Observation
+        # --------------------------------------------------
+
+        observation = (
+            self._get_observation()
+        )
+
+        # --------------------------------------------------
+        # 11. Information for UI/debugging
+        # --------------------------------------------------
+
+        info = self._get_info()
+
+        info["arrivals"] = arrivals
+        info["boarded"] = boarded
+        info["dispatched"] = dispatched
+        info["waiting_time"] = waiting_time
 
         return (
-            demand_level,
-            waiting_level,
-            available_level,
-            active_level,
-            occupancy_level,
-            headway_level,
+            observation,
+            reward,
+            terminated,
+            truncated,
+            info,
         )
 
+  #Info about environment
+    def _get_info(self):
 
-    # ========================================================
-    # FULL ENVIRONMENT STATE
-    # ========================================================
+        zone_predictions = []
 
-    def get_state(self):
+        for zone in range(
+            self.num_zones
+        ):
+
+            zone_predictions.append({
+
+                "zone":
+                    self.zones[zone],
+
+                "waiting":
+                    float(
+                        self.waiting[zone]
+                    ),
+
+                "future_demand":
+                    self._expected_future_demand(
+                        zone
+                    ),
+
+                "bus_eta":
+                    self._nearest_bus_eta(
+                        zone
+                    ),
+
+                "unmet_demand":
+                    self._estimate_unmet_demand(
+                        zone
+                    ),
+            })
+
+        bus_information = []
+
+        for bus in self.buses:
+
+            bus_information.append({
+
+                "id":
+                    bus["id"],
+
+                "zone":
+                    self.zones[
+                        bus["position"]
+                    ],
+
+                "position":
+                    bus["position"],
+
+                "passengers":
+                    bus["passengers"],
+
+                "capacity":
+                    self.bus_capacity,
+
+                "occupancy":
+                    (
+                        bus["passengers"]
+                        / self.bus_capacity
+                    ),
+            })
 
         return {
 
-            # ----------------------------------------------
-            # Simulation
-            # ----------------------------------------------
-
-            "time_step":
-                self.time,
-
             "time":
-                round(
-                    self.current_hour(),
-                    2
-                ),
-
-            # ----------------------------------------------
-            # Passenger information
-            # ----------------------------------------------
-
-            "waiting":
-                self.waiting.copy(),
+                self._current_hour(),
 
             "total_waiting":
-                sum(
-                    self.waiting.values()
+                int(
+                    self.waiting.sum()
                 ),
+
+            "active_buses":
+                len(self.buses),
+
+            "available_buses":
+                (
+                    self.total_fleet
+                    - len(self.buses)
+                ),
+
+            "occupancy":
+                self._average_occupancy(),
 
             "total_arrivals":
                 self.total_arrivals,
@@ -864,96 +742,117 @@ class RingRoadEnvironment:
             "total_served":
                 self.total_served,
 
-            # ----------------------------------------------
-            # Fleet
-            # ----------------------------------------------
-
-            "available_buses":
-                self.available_buses(),
-
-            "active_buses":
-                self.active_buses(),
-
-            "average_occupancy":
-                round(
-                    self.average_occupancy()
-                    * 100,
-                    2
-                ),
-
-            # ----------------------------------------------
-            # Operations
-            # ----------------------------------------------
-
-            "completed_trips":
-                self.completed_trips,
-
-            # ----------------------------------------------
-            # Finance
-            # ----------------------------------------------
-
             "revenue":
-                round(
-                    self.total_revenue,
-                    2
-                ),
+                self.total_revenue,
 
             "cost":
-                round(
-                    self.total_cost,
-                    2
-                ),
+                self.total_cost,
 
             "profit":
-                round(
-                    self.total_profit,
-                    2
+                (
+                    self.total_revenue
+                    - self.total_cost
                 ),
 
-            # ----------------------------------------------
-            # Last dispatch
-            # ----------------------------------------------
+            "buses":
+                bus_information,
 
-            "last_dispatch_time":
-                self.last_dispatch_time,
-
-            # ----------------------------------------------
-            # Individual buses
-            # ----------------------------------------------
-
-            "buses": [
-
-                {
-
-                    "id":
-                        bus.bus_id,
-
-                    "zone":
-                        bus.zone,
-
-                    "position":
-                        bus.position,
-
-                    "passengers":
-                        bus.passengers,
-
-                    "capacity":
-                        BUS_CAPACITY,
-
-                    "occupancy":
-                        round(
-                            bus.occupancy * 100,
-                            2
-                        ),
-
-                    "active":
-                        bus.active,
-
-                    "trips_completed":
-                        bus.trips_completed,
-
-                }
-
-                for bus in self.buses
-            ],
+            "zone_predictions":
+                zone_predictions,
         }
+
+
+    # Render environment
+
+    def render(self):
+
+        print()
+        print("=" * 70)
+        print("TRANSITOPT - KATHMANDU RING ROAD")
+        print("=" * 70)
+
+        print(
+            f"Time: "
+            f"{self._current_hour():.2f}"
+        )
+
+        print(
+            f"Waiting passengers: "
+            f"{self.waiting.sum():.0f}"
+        )
+
+        print(
+            f"Active buses: "
+            f"{len(self.buses)}"
+        )
+
+        print(
+            f"Available buses: "
+            f"{self.total_fleet - len(self.buses)}"
+        )
+
+        print(
+            f"Average occupancy: "
+            f"{self._average_occupancy() * 100:.1f}%"
+        )
+
+        print()
+
+        print("BUSES")
+        print("-" * 70)
+
+        for bus in self.buses:
+
+            print(
+                f"Bus {bus['id']:02d} | "
+                f"{self.zones[bus['position']]:<12} | "
+                f"{bus['passengers']:02d}/"
+                f"{self.bus_capacity}"
+            )
+
+        print()
+
+        print("ZONE DEMAND")
+        print("-" * 70)
+
+        for zone in range(
+            self.num_zones
+        ):
+
+            eta = (
+                self._nearest_bus_eta(
+                    zone
+                )
+            )
+
+            print(
+                f"{self.zones[zone]:<12} | "
+                f"Waiting: "
+                f"{self.waiting[zone]:5.0f} | "
+                f"Future: "
+                f"{self._expected_future_demand(zone):5.1f} | "
+                f"ETA: "
+                f"{str(eta):>5} min | "
+                f"Unmet: "
+                f"{self._estimate_unmet_demand(zone):5.1f}"
+            )
+
+        print("=" * 70)
+
+
+    #Close Simulation
+    def close(self):
+        pass
+
+
+
+
+if __name__ == "__main__":
+    env = RingRoadEnv()
+    print(env.base_demand)
+    print("Environment initialized successfully.")
+
+        
+
+
+
