@@ -76,6 +76,13 @@ class RingRoadEnv(gym.Env):
 
         self.action_space = spaces.Discrete(4)
 
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.num_zones * 4 + 3,),
+            dtype=np.float32,
+        )
+
 
         # OBSERVATION SPACE
 
@@ -106,12 +113,13 @@ class RingRoadEnv(gym.Env):
         self.total_revenue = 0
         self.total_cost = 0
         self.total_waiting_time = 0
+        self.total_fleet = 10
+        self.bus_capacity = 50
 
 
 
 
-     
-      #Reset
+     #Reset
 
     def reset(self, *, seed=None, options=None):
 
@@ -200,7 +208,7 @@ class RingRoadEnv(gym.Env):
 
      # DISPATCH BUS FROM GONGABU
 
-    def _bus_dispatch(self):
+    def _dispatch_bus(self):
 
         if len(self.buses) >= self.total_fleet:
             return False
