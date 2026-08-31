@@ -95,6 +95,26 @@ class QLearningAgent:
 
 
 # STATE DISCRETIZATION
+
+# Number of discrete levels per feature
+WAITING_LEVELS = 6
+OCCUPANCY_LEVELS = 4
+DEMAND_LEVELS = 4
+BUS_LEVELS = 4
+AVAILABLE_LEVELS = 3
+HOUR_LEVELS = 3
+
+ACTION_SIZE = 4
+
+STATE_SIZE = (
+    HOUR_LEVELS
+    * WAITING_LEVELS
+    * OCCUPANCY_LEVELS
+    * DEMAND_LEVELS
+    * BUS_LEVELS
+    * AVAILABLE_LEVELS
+)
+
 def discretize_state(observation):
     """
     Convert the continuous environment observation
@@ -106,15 +126,12 @@ def discretize_state(observation):
         - active buses
         - average occupancy
         - high-demand zones
+        - time of day (to react to demand peaks)
     """
 
-    # -----------------------------------------------
     # Extract zone information
-    # -----------------------------------------------
 
     waiting = []
-
-    future_demand = []
 
     unmet_demand = []
 
@@ -126,22 +143,20 @@ def discretize_state(observation):
             observation[index]
         )
 
-        future_demand.append(
-            observation[index + 1]
-        )
-
         unmet_demand.append(
             observation[index + 3]
         )
 
 
     # Global information
-   
-    available_buses = observation[-3]
 
-    active_buses = observation[-2]
+    available_buses = observation[-4]
 
-    occupancy = observation[-1]
+    active_buses = observation[-3]
+
+    occupancy = observation[-2]
+
+    hour = observation[-1]
 
     # Total waiting passengers
     total_waiting = sum(waiting)
@@ -170,10 +185,8 @@ def discretize_state(observation):
 
         waiting_level = 5
 
-    # -----------------------------------------------
+  
     # Occupancy level
-    # -----------------------------------------------
-
     if occupancy < 0.40:
 
         occupancy_level = 0
@@ -231,7 +244,7 @@ def discretize_state(observation):
 
         bus_level = 3
 
-  
+
     # Available bus level
     if available_buses <= 2:
 
@@ -245,13 +258,35 @@ def discretize_state(observation):
 
         available_level = 2
 
-    # Encode into one integer
+    # -----------------------------------------------
+    # Time-of-day level (mirrors the demand multiplier)
+    # -----------------------------------------------
+
+    if 7 <= hour < 9 or 16 <= hour < 19:
+
+        hour_level = 2
+
+    elif 10 <= hour < 15:
+
+        hour_level = 1
+
+    else:
+
+        hour_level = 0
+
+    # Encode into one integer (mixed radix)
     state = (
-        waiting_level * 4 * 4 * 4 * 3
-        + occupancy_level * 4 * 4 * 3
-        + demand_level * 4 * 3
-        + bus_level * 3
-        + available_level
+        (
+            (
+                (
+                    (hour_level * WAITING_LEVELS + waiting_level)
+                    * OCCUPANCY_LEVELS + occupancy_level
+                )
+                * DEMAND_LEVELS + demand_level
+            )
+            * BUS_LEVELS + bus_level
+        )
+        * AVAILABLE_LEVELS + available_level
     )
 
     return int(state)
@@ -265,7 +300,12 @@ def train():
 
    
     state_size = (
-        6 * 4 * 4 * 4 * 3
+        HOUR_LEVELS
+        * WAITING_LEVELS
+        * OCCUPANCY_LEVELS
+        * DEMAND_LEVELS
+        * BUS_LEVELS
+        * AVAILABLE_LEVELS
     )
 
     action_size = (
@@ -275,6 +315,8 @@ def train():
     agent = QLearningAgent(
         state_size=state_size,
         action_size=action_size,
+        epsilon_decay=0.998,
+        epsilon_min=0.02,
     )
 
     episodes = 5000
@@ -300,13 +342,11 @@ def train():
         terminated = False
         truncated = False
 
-        while not (
-            terminated or truncated
-        ):
+        while not (terminated or truncated):
 
-            # ---------------------------------------
+          
             # Select action
-            # ---------------------------------------
+         
 
             action = agent.choose_action(
                 state

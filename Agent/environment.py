@@ -76,10 +76,20 @@ class RingRoadEnv(gym.Env):
 
         self.action_space = spaces.Discrete(4)
 
+        # Bounds per zone: [waiting, future demand, bus eta, unmet demand]
+        per_zone_high = [5000.0, 300.0, 50.0, 5000.0]
+
+        # Global: [available buses, active buses, occupancy, current hour]
+        global_high = [15.0, 15.0, 1.0, 24.0]
+
+        high = np.array(
+            per_zone_high * self.num_zones + global_high,
+            dtype=np.float32,
+        )
+
         self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(self.num_zones * 4 + 3,),
+            low=np.zeros_like(high),
+            high=high,
             dtype=np.float32,
         )
 
@@ -99,6 +109,7 @@ class RingRoadEnv(gym.Env):
             # 5. Available buses
             # 6. Active buses
             # 7. Average occupancy
+            # 8. Current hour of day
 
 
         #Internal state representation
@@ -113,7 +124,7 @@ class RingRoadEnv(gym.Env):
         self.total_revenue = 0
         self.total_cost = 0
         self.total_waiting_time = 0
-        self.total_fleet = 10
+        self.total_fleet = 15
         self.bus_capacity = 50
 
 
@@ -240,15 +251,24 @@ class RingRoadEnv(gym.Env):
 
     def _move_buses(self):
 
+        surviving = []
+
         for bus in self.buses:
 
             # Move one zone every simulation step
             bus["position"] += 1
 
-            # After completion reset positon on gongabu
+            # After completing a full loop, the bus returns
+            # to the depot (Gongabu) and becomes available
+            # again. It can only run again if re-dispatched,
+            # so "dispatch" stays a meaningful per-step decision.
             if bus["position"] >= self.num_zones:
-                bus["position"] = 0
-                bus["passengers"] = 0
+
+                continue
+
+            surviving.append(bus)
+
+        self.buses = surviving
 
     
     # PASSENGER PROCESSING
@@ -472,24 +492,33 @@ class RingRoadEnv(gym.Env):
             np.mean(occupancies)
         )
 
-    def _calculate_reward(self, waiting_time, step_profit):
+    def _calculate_reward(self, boarded, waiting):
 
-  
-        waiting_penalty = waiting_time * 0.015
+        # Reward passengers served (weak proxy for revenue)
+        service_reward = boarded * 0.5
+
+        # Operating cost: penalize every active bus
+        cost_penalty = len(self.buses) * 1.0
+
+        # Penalize passengers still waiting at the end of the step
+        waiting_penalty = float(waiting.sum()) * 0.1
+
+        # Only penalize overcrowding (fleets running over 80% full)
         occupancy = self._average_occupancy()
 
-        target_occupancy = 0.45
+        overcrowd_penalty = 0.0
 
-        occupancy_penalty = (
-            abs(occupancy - target_occupancy) * 10
-        )
+        if occupancy > 0.80:
 
-        profit_reward = step_profit * 0.01
+            overcrowd_penalty = (
+                (occupancy - 0.80) * 20
+            )
 
         reward = (
-            profit_reward
+            service_reward
+            - cost_penalty
             - waiting_penalty
-            - occupancy_penalty
+            - overcrowd_penalty
         )
 
         return float(reward)
@@ -553,10 +582,13 @@ class RingRoadEnv(gym.Env):
             self._average_occupancy()
         )
 
+        hour = self._current_hour()
+
         observation.extend([
             available_buses,
             active_buses,
             occupancy,
+            hour,
         ])
 
         return np.array(
@@ -618,8 +650,8 @@ class RingRoadEnv(gym.Env):
 
         reward = (
             self._calculate_reward(
-                waiting_time,
-                step_profit,
+                boarded,
+                self.waiting,
             )
         )
 
@@ -736,6 +768,9 @@ class RingRoadEnv(gym.Env):
 
             "time":
                 self._current_hour(),
+
+            "step":
+                self.current_step,
 
             "total_waiting":
                 int(
