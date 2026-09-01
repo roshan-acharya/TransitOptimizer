@@ -29,7 +29,10 @@ The main objectives of TransitOptimizer are:
 
 The simulation contains eight bus stops/zones:
 
-![Sampled Ring Road Environment](assets/route.png)
+
+<p align="center">
+  <img src="assets/route.png" width="300" alt="Sampled Ring Road Environment">
+</p>
 
 The road is treated as a **ring**, meaning that after Chabahil, the bus returns to Gongabu.
 
@@ -615,8 +618,9 @@ The backend:
 
 The architecture is:
 
-![Sampled Ring Road Environment](assets/system.png)
-
+<p align="center">
+  <img src="assets/system.png" width="400" alt="Sampled Ring Road Environment">
+</p>
 
 ---
 
@@ -625,7 +629,10 @@ The architecture is:
 # 📈 Simulation Training Metrics
 
 
-![Sampled Ring Road Environment](assets/training_progress.png)
+
+<p align="center">
+  <img src="assets/training_progress.png" width="500" alt="Training Metrics">
+</p>
 
 # 🖥️ Web UI
 
@@ -633,8 +640,10 @@ The frontend provides a visual representation of the simulation.
 
 The UI can display as below:
 
-![Sampled Ring Road Environment](assets/ui.png)
 
+<p align="center">
+  <img src="assets/ui.png" width="500" alt="UI">
+</p>
 ---
 
 # 📁 Project Structure
