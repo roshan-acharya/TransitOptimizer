@@ -74,38 +74,24 @@ except Exception as e:
     )
 
 
-# ============================================================
 # REQUEST MODEL
-# ============================================================
-
 class StepRequest(BaseModel):
 
     # None means use the trained Q-table
     action: int | None = None
 
 
-# ============================================================
 # Q-LEARNING ACTION
-# ============================================================
-
 def q_action(
     q_table,
     observation,
 ):
 
-    # Convert continuous observation
-    # into the same discrete state
-    # used during training.
-
     state = discretize_state(
         observation
     )
 
-    # Get Q-values for this state
-
     q_values = q_table[state]
-
-    # Select action with highest Q-value
 
     action = int(
         np.argmax(q_values)
@@ -114,11 +100,9 @@ def q_action(
     return action
 
 
-# ============================================================
-# FIXED-DISPATCH POLICY
-# ============================================================
 
-# The direct baseline always keeps this many buses on the road.
+# FIXED-DISPATCH POLICY
+
 FIXED_ACTIVE_BUSES = 7
 
 
@@ -126,13 +110,6 @@ def direct_action(
     observation,
     env,
 ):
-
-    """
-    Fixed baseline policy: exactly 7 buses are always kept on
-    the road. Each step the number of buses needed to reach that
-    fixed fleet is launched (they loop the ring and are re-launched
-    as they return to the depot).
-    """
 
     active = len(env.buses)
 
@@ -142,18 +119,10 @@ def direct_action(
     )
 
 
-# ============================================================
-# SERIALIZE ENVIRONMENT INFO
-# ============================================================
 
 def serialize_value(
     value
 ):
-
-    """
-    Recursively convert numpy values to
-    plain Python types (JSON-safe).
-    """
 
     if isinstance(
         value,
@@ -226,10 +195,7 @@ def serialize_info(
     return result
 
 
-# ============================================================
 # SIMULATION MANAGER
-# ============================================================
-
 class SimulationManager:
 
     def __init__(self):
@@ -245,10 +211,7 @@ class SimulationManager:
         self.reset()
 
 
-    # ========================================================
     # RESET
-    # ========================================================
-
     def reset(
         self,
         seed=42
@@ -273,10 +236,7 @@ class SimulationManager:
         )
 
 
-    # ========================================================
     # CONVERT INFO FOR FRONTEND
-    # ========================================================
-
     def get_state(
         self,
         env,
@@ -401,11 +361,6 @@ class SimulationManager:
                 ),
         }
 
-
-    # ========================================================
-    # TIME FORMAT
-    # ========================================================
-
     @staticmethod
     def format_time(
         hour
@@ -434,28 +389,17 @@ class SimulationManager:
         )
 
 
-    # ========================================================
-    # STEP BOTH SIMULATIONS
-    # ========================================================
-
     def step(
         self,
         manual_q_action=None
     ):
 
-        # ----------------------------------------------------
-        # Make sure Q-table exists
-        # ----------------------------------------------------
-
+    
         if Q_TABLE is None:
 
             raise RuntimeError(
                 "Q-table is not loaded."
             )
-
-        # ----------------------------------------------------
-        # Q-LEARNING ACTION
-        # ----------------------------------------------------
 
         if manual_q_action is None:
 
@@ -470,10 +414,8 @@ class SimulationManager:
                 manual_q_action
             )
 
-        # ----------------------------------------------------
         # Validate action
-        # ----------------------------------------------------
-
+ 
         if q_action_value < 0:
 
             raise ValueError(
@@ -505,10 +447,6 @@ class SimulationManager:
             q_action_value
         )
 
-        # ----------------------------------------------------
-        # STEP DIRECT ENVIRONMENT
-        # ----------------------------------------------------
-
         (
             self.direct_observation,
             direct_reward,
@@ -522,10 +460,7 @@ class SimulationManager:
             ),
         )
 
-        # ----------------------------------------------------
-        # Auto-reset when either env reaches 22:00
-        # ----------------------------------------------------
-
+  
         reset_happened = False
 
         if q_terminated or direct_terminated:
@@ -533,10 +468,6 @@ class SimulationManager:
             self.reset()
 
             reset_happened = True
-
-        # ----------------------------------------------------
-        # Prepare response
-        # ----------------------------------------------------
 
         q_state = self.get_state(
             self.q_env,
@@ -613,16 +544,8 @@ class SimulationManager:
         }
 
 
-# ============================================================
-# CREATE SIMULATION
-# ============================================================
 
 simulation = SimulationManager()
-
-
-# ============================================================
-# ROOT
-# ============================================================
 
 @app.get("/")
 def root():
@@ -662,9 +585,7 @@ def root():
     }
 
 
-# ============================================================
 # HEALTH CHECK
-# ============================================================
 
 @app.get("/api/health")
 def health():
@@ -691,9 +612,6 @@ def health():
     }
 
 
-# ============================================================
-# RESET
-# ============================================================
 
 @app.post("/api/simulation/reset")
 def reset():
@@ -743,10 +661,6 @@ def simulation_step(
         )
 
 
-# ============================================================
-# CURRENT STATE
-# ============================================================
-
 @app.get(
     "/api/simulation"
 )
@@ -767,10 +681,6 @@ def current_simulation():
             ),
     }
 
-
-# ============================================================
-# INSPECT Q-TABLE STATE
-# ============================================================
 
 @app.get(
     "/api/q-table/{state}"
@@ -832,10 +742,6 @@ def inspect_q_table(
         }
     }
 
-
-# ============================================================
-# STATIC FILES
-# ============================================================
 
 if os.path.exists(
     BASE_DIR
