@@ -107,6 +107,7 @@ th{opacity:.6;font-weight:600}
 </div>
 </main>
 
+<script src="config.js"></script>
 <script>
 const Z=["Gongabu","Balaju","Kalanki","Balkhu","Satdobato","Koteshwor","Tinkune","Chabahil"];
 
@@ -126,8 +127,11 @@ function zonePoint(geo, i, off){
   return {x:geo.cx+R*Math.cos(a), y:geo.cy+R*Math.sin(a)};
 }
 
-// Backend base URL — same origin by default. Change if the API is hosted elsewhere.
-const API_BASE = "http://127.0.0.1:8000";
+// Backend base URL, read from config.js (see config.js). Falls back to
+// same-origin or the local dev backend if not configured there.
+const API_BASE = (typeof window.APP_CONFIG !== "undefined" && window.APP_CONFIG.BACKEND_URL)
+  ? window.APP_CONFIG.BACKEND_URL
+  : (location.origin && location.origin !== "null" ? location.origin : "http://127.0.0.1:8000");
 
 let timer=null;
 let latest=null; // last payload received from the backend
