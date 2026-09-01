@@ -29,7 +29,6 @@ class RingRoadEnv(gym.Env):
         super().__init__()
 
         #Road Zones
-
         self.zones = [
             "Gongabu",
             "Balaju",
@@ -51,8 +50,10 @@ class RingRoadEnv(gym.Env):
         self.fare_per_passenger = 30
         self.cost_per_bus_per_step = 40
 
-        # Base passenger demands
+        # Passengers who wait longer than this are assumed to have taken another bus and are removed from the queue.
+        self.max_wait_steps = 6
 
+        # Base passenger demands
         self.base_demand = np.array([
             10,  # Gongabu
             7,   # Balaju
@@ -124,6 +125,7 @@ class RingRoadEnv(gym.Env):
         self.total_revenue = 0
         self.total_cost = 0
         self.total_waiting_time = 0
+        self.total_left = 0
         self.total_fleet = 15
         self.bus_capacity = 50
 
@@ -144,6 +146,16 @@ class RingRoadEnv(gym.Env):
             dtype=np.float32,
         )
 
+        # Per-zone histogram of how long (in steps) each waiting
+        # passenger has already waited. Bucket k = waited k steps.
+        self.waiting_by_age = np.zeros(
+            (
+                self.num_zones,
+                self.max_wait_steps + 1,
+            ),
+            dtype=np.float32,
+        )
+
         # List of active buses
         self.buses = []
 
@@ -153,6 +165,7 @@ class RingRoadEnv(gym.Env):
         self.total_revenue = 0
         self.total_cost = 0
         self.total_waiting_time = 0
+        self.total_left = 0
 
         observation = self._get_observation()
 
@@ -210,6 +223,9 @@ class RingRoadEnv(gym.Env):
 
         self.waiting += arrivals
 
+        # New arrivals have waited 0 minutes so far
+        self.waiting_by_age[:, 0] += arrivals
+
         self.total_arrivals += int(
             arrivals.sum()
         )
@@ -236,7 +252,6 @@ class RingRoadEnv(gym.Env):
 
     
      # BUS ID
-
     def _next_bus_id(self):
 
         if not self.buses:
@@ -248,7 +263,6 @@ class RingRoadEnv(gym.Env):
         ) + 1
     
     #Move bus
-
     def _move_buses(self):
 
         surviving = []
@@ -313,6 +327,10 @@ class RingRoadEnv(gym.Env):
 
             self.waiting[zone] -= boarded
 
+            # Remove the boarded passengers from the age histogram,
+            # oldest waiters board first.
+            self._remove_from_age(zone, int(boarded))
+
             bus["passengers"] += boarded
 
             total_boarded += int(boarded)
@@ -326,7 +344,87 @@ class RingRoadEnv(gym.Env):
             )
 
         return total_boarded
-    
+
+    #Remove a number of passengers from a zone's age histogram,
+    #oldest waiters first.
+    def _remove_from_age(self, zone, amount):
+
+        if amount <= 0:
+            return
+
+        remaining = float(amount)
+
+        # Oldest bucket first: bucket index = steps waited
+        for age_step in range(
+            self.max_wait_steps,
+            -1,
+            -1,
+        ):
+
+            if remaining <= 0:
+                break
+
+            available = (
+                self.waiting_by_age[zone, age_step]
+            )
+
+            if available <= 0:
+                continue
+
+            taken = min(
+                available,
+                remaining,
+            )
+
+            self.waiting_by_age[
+                zone,
+                age_step
+            ] -= taken
+
+            remaining -= taken
+
+    #Remove passengers who waited 30+ minutes 
+    def _remove_impatient_passengers(self):
+
+        removed = (
+            self.waiting_by_age[
+                :,
+                self.max_wait_steps,
+            ].sum()
+        )
+
+        # Drop the waiting passengers who exceeded the wait limit
+        self.waiting_by_age[
+            :,
+            self.max_wait_steps,
+        ] = 0
+
+        # Age up everyone who is still waiting
+        self.waiting_by_age[
+            :,
+            1:,
+        ] = self.waiting_by_age[
+            :,
+            :-1,
+        ]
+
+        self.waiting_by_age[
+            :,
+            0,
+        ] = 0
+
+        # Keep the scalar count in sync with the histogram
+        self.waiting = (
+            self.waiting_by_age.sum(
+                axis=1,
+            ).astype(
+                np.float32,
+            )
+        )
+
+        return int(removed)
+
+
     #Find nearest bus to the zone
     def _nearest_bus(self, zone):
 
@@ -597,7 +695,7 @@ class RingRoadEnv(gym.Env):
         )
     
     # STEP
-    def step(self, action):
+    def step(self, action, fixed_dispatch=None):
 
         action = int(action)
 
@@ -608,7 +706,14 @@ class RingRoadEnv(gym.Env):
     
         dispatched = 0
 
-        for _ in range(action):
+        # A fixed-dispatch policy
+        dispatch_count = (
+            action
+            if fixed_dispatch is None
+            else int(fixed_dispatch)
+        )
+
+        for _ in range(dispatch_count):
 
             if self._dispatch_bus():
 
@@ -618,6 +723,14 @@ class RingRoadEnv(gym.Env):
         boarded = (
             self._process_passengers()
         )
+
+        # Remove passengers who waited too long 
+
+        left = (
+            self._remove_impatient_passengers()
+        )
+
+        self.total_left += left
 
     
         waiting_time = (
@@ -794,6 +907,9 @@ class RingRoadEnv(gym.Env):
 
             "total_served":
                 self.total_served,
+
+            "total_left":
+                self.total_left,
 
             "revenue":
                 self.total_revenue,

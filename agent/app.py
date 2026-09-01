@@ -12,9 +12,9 @@ from environment import RingRoadEnv
 from train import discretize_state
 
 
-# ============================================================
+
 # FASTAPI
-# ============================================================
+
 
 app = FastAPI(
     title="TransitOptimizer API",
@@ -31,24 +31,14 @@ app.add_middleware(
 )
 
 
-# ============================================================
+
 # PATHS
-# ============================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-Q_TABLE_PATH = os.path.join(
-    BASE_DIR,
-    "q_table.npy"
-)
+Q_TABLE_PATH = os.path.join(BASE_DIR, "q_table.npy")
 
 
-# ============================================================
-# LOAD Q-TABLE
-# ============================================================
-
+#Load Q Table 
 def load_q_table():
 
     if not os.path.exists(Q_TABLE_PATH):
@@ -59,8 +49,10 @@ def load_q_table():
         )
 
     q_table = np.load(Q_TABLE_PATH)
+    print(q_table)
 
     return q_table
+
 
 
 # Load once when backend starts
@@ -123,12 +115,11 @@ def q_action(
 
 
 # ============================================================
-# FIXED-INTERVAL DISPATCH POLICY
+# FIXED-DISPATCH POLICY
 # ============================================================
 
-# Headway in simulation steps. Each step = 5 minutes,
-# so 3 steps = one bus every 15 minutes, always fixed.
-DIRECT_HEADWAY_STEPS = 3
+# The direct baseline always keeps this many buses on the road.
+FIXED_ACTIVE_BUSES = 7
 
 
 def direct_action(
@@ -137,21 +128,18 @@ def direct_action(
 ):
 
     """
-    Fixed-interval schedule (baseline policy).
-
-    One bus is dispatched every DIRECT_HEADWAY_STEPS steps,
-    regardless of demand, so the fleet always keeps the same
-    fixed cadence: one bus arrives at a stop while the others
-    keep moving around the ring.
-
-    Returns 0 or 1 (dispatch none / dispatch one bus).
+    Fixed baseline policy: exactly 7 buses are always kept on
+    the road. Each step the number of buses needed to reach that
+    fixed fleet is launched (they loop the ring and are re-launched
+    as they return to the depot).
     """
 
-    if env.current_step % DIRECT_HEADWAY_STEPS == 0:
+    active = len(env.buses)
 
-        return 1
-
-    return 0
+    return max(
+        0,
+        FIXED_ACTIVE_BUSES - active,
+    )
 
 
 # ============================================================
@@ -370,6 +358,13 @@ class SimulationManager:
                     ]
                 ),
 
+            "total_left":
+                int(
+                    info[
+                        "total_left"
+                    ]
+                ),
+
             "revenue":
                 float(
                     info[
@@ -500,10 +495,6 @@ class SimulationManager:
             self.direct_env
         )
 
-        # ----------------------------------------------------
-        # STEP Q ENVIRONMENT
-        # ----------------------------------------------------
-
         (
             self.q_observation,
             q_reward,
@@ -525,8 +516,23 @@ class SimulationManager:
             direct_truncated,
             direct_info
         ) = self.direct_env.step(
-            direct_action_value
+            direct_action_value,
+            fixed_dispatch=(
+                direct_action_value
+            ),
         )
+
+        # ----------------------------------------------------
+        # Auto-reset when either env reaches 22:00
+        # ----------------------------------------------------
+
+        reset_happened = False
+
+        if q_terminated or direct_terminated:
+
+            self.reset()
+
+            reset_happened = True
 
         # ----------------------------------------------------
         # Prepare response
@@ -597,18 +603,13 @@ class SimulationManager:
             },
 
             "terminated":
-                bool(
-                    q_terminated
-                    or
-                    direct_terminated
-                ),
+                False,
 
             "truncated":
-                bool(
-                    q_truncated
-                    or
-                    direct_truncated
-                ),
+                False,
+
+            "reset":
+                reset_happened,
         }
 
 
