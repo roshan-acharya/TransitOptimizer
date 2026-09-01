@@ -48,14 +48,14 @@ th{opacity:.6;font-weight:600}
 </head>
 <body>
 <header>
-<div><h1>🚌 TransitOptimizer</h1><div class="sub">Adaptive bus dispatching — Kathmandu Ring Road</div></div>
+<div><h1>TransitOptimizer</h1><div class="sub">Adaptive bus dispatching</div></div>
 <div class="sub">5 min / step · 06:00–22:00 · 15 buses · capacity 50</div>
 </header>
 
 <main>
 <div class="toolbar">
 <button onclick="start()">▶ Start</button><button class="secondary" onclick="pause()">⏸ Pause</button>
-<button class="secondary" onclick="stepOnce()">Step</button><button class="danger" onclick="resetAll()">↻ Reset</button>
+<button class="secondary" onclick="stepOnce()">Step</button><button class="danger" onclick="resetAll()">Reset</button>
 <label class="sub">Speed <input id="speed" type="range" min="400" max="5000" value="1800"><span id="speedVal">1.8s</span></label>
 <span class="statusMsg" id="statusMsg"></span>
 </div>
@@ -71,7 +71,7 @@ th{opacity:.6;font-weight:600}
 
 <div class="grid" style="margin-top:14px">
 <div class="card">
-<div class="panelTitle">🤖 Q-Learning — Live Ring Road</div>
+<div class="panelTitle">Q Learning Live Ring Road</div>
 <div id="road">
 <div class="roadRing"></div><div class="roadCenter"></div>
 </div>
@@ -79,11 +79,11 @@ th{opacity:.6;font-weight:600}
 </div>
 
 <div class="card">
-<div class="panelTitle">🚌 Direct Dispatch — Live Ring Road</div>
+<div class="panelTitle">Direct Dispatch Live Ring Road</div>
 <div id="directRoad">
 <div class="roadRing"></div><div class="roadCenter"></div>
 </div>
-<div class="legend">Fixed-interval dispatch: one bus is dispatched every 15 minutes regardless of demand — a constant schedule so one bus is always arriving while the others keep moving.</div>
+<div class="legend">Fixed-interval dispatch : one bus is dispatched every 15 minutes regardless of demand.</div>
 </div>
 
 <div class="card">
@@ -99,8 +99,8 @@ th{opacity:.6;font-weight:600}
 <div class="card" style="margin-top:14px">
 <div class="panelTitle">Q-Learning vs Direct Dispatch</div>
 <div class="compare">
-<div class="method"><h3>🤖 Q-Learning</h3><div class="label">PROFIT</div><div id="qProfit" class="big">Rs. 0</div><div class="label">SERVED</div><div id="qServed">0</div><div class="label">ACTIVE BUSES</div><div id="qActive">0</div></div>
-<div class="method"><h3>🚌 Direct / Fixed Dispatch</h3><div class="label">PROFIT</div><div id="dProfit" class="big">Rs. 0</div><div class="label">SERVED</div><div id="dServed">0</div><div class="label">ACTIVE BUSES</div><div id="dActive">0</div></div>
+<div class="method"><h3> Q-Learning</h3><div class="label">PROFIT</div><div id="qProfit" class="big">Rs. 0</div><div class="label">SERVED</div><div id="qServed">0</div><div class="label">ACTIVE BUSES</div><div id="qActive">0</div></div>
+<div class="method"><h3> Direct / Fixed Dispatch</h3><div class="label">PROFIT</div><div id="dProfit" class="big">Rs. 0</div><div class="label">SERVED</div><div id="dServed">0</div><div class="label">ACTIVE BUSES</div><div id="dActive">0</div></div>
 </div>
 <div style="height:12px"></div>
 <table><thead><tr><th>Metric</th><th>Q-Learning</th><th>Direct</th><th>Difference</th></tr></thead><tbody id="comparison"></tbody></table>
